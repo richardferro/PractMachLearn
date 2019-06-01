@@ -1,0 +1,213 @@
+---
+title: "Coursera/JHU - Practical Machine Learning Course Project"
+author: "Richard Ferro"
+date: "5/26/2019"
+output: html_document
+---
+
+## Overview
+
+This is the final report for Coursera/JHU  Practical Machine Learning course which is part of the Specialization in Data Science. The project is peer assessed, is constructed with RStudio using the knitr functions, and is published in html format.
+
+The assignment is to predict the manner of how the participant's did their exercises.  The results will be applied to the 20 tests cases available in the test data and the resulting predictions are use to perform the Course Project Prediction Quiz that is  automated grading.
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3xsbS5bVX
+
+
+## Libraries
+
+```{r, cache = T}
+library(knitr)
+```
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+library(rattle)
+library(gbm)
+```
+
+
+```{r}
+library(caret)
+```
+
+```{r}
+library(corrplot)
+```
+
+## Getting, Cleaning, and Preparing the Data
+
+```{r}
+#read in the data
+TrainData <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"),header=TRUE)
+dim(TrainData)
+
+TestData <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"),header=TRUE)
+dim(TestData)
+
+str(TrainData)
+```
+
+Both both data sets have 160 variables.  The training set has a 19622 observations and the test data set has 20 observations.  
+
+```{r}
+#remove NAs
+ClnTrainData<- TrainData[, colSums(is.na(TrainData)) == 0]
+dim(ClnTrainData)
+
+ClnTestData<- TestData[, colSums(is.na(TestData)) == 0]
+dim(ClnTestData)
+```
+After removing NA values the training data set has 19622 observations and 93 columns and the testing data set has 20 observations with 60 columns.  Many columns have NA values or blank values for most observations.  Next these columns are removed.
+
+
+```{r}
+#remove first seven columns
+ClnTrainData1 <- ClnTrainData[, -c(1:7)]
+dim(ClnTrainData1)
+
+
+ClnTestData1 <- ClnTestData[, -c(1:7)]
+dim(ClnTestData1)
+
+```
+
+The cleaned training data set is partitioned 70% into a new training data set, Train1, and 30% into a new testing data set, Test1.
+
+```{r}
+# Partitioning the data data
+set.seed(1234) 
+inTrain <- createDataPartition(ClnTrainData1$classe, p = 0.7, list = FALSE)
+Train1 <- ClnTrainData1[inTrain,]
+Test1 <- ClnTrainData1[-inTrain, ]
+
+dim(Train1)
+
+dim(Test1)
+```
+
+Next the data is furthered prepared for predictive modeling by cleaning the data of the variables with Near-Zero Variances.
+
+#Cleaning Data further by Removing the Variables with Near-Zero Variances
+
+```{r}
+NZV <- nearZeroVar(Train1)
+train <- Train1[, -NZV]
+test  <- Test1[, -NZV]
+dim(train)
+dim(test)
+```
+
+##Correlation Analysis
+
+A correlation among variables is analysed before proceeding to the predictive modeling.
+
+```{r}
+corMatrix <- cor(train[, -53])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+
+```
+
+In the corrplot graph the dark color intersections indicate the correlated predictors.  The findCorrelation function is used to obtain the names of the correlated variables.  The cutoff was set to 0.75.
+
+```{r}
+highCorr = findCorrelation(corMatrix, cutoff=0.75)
+names(train)[highCorr]
+```
+
+##Prediction Model Building
+
+Three prediction methods will be applied to model the regressions in the Train dataset.  Decision Tree, Random Forests, and Generalized Boosted Model.
+
+#Decision Tree
+
+```{r}
+set.seed(12345)
+decisionTree <- rpart(classe ~ ., data=train, method="class")
+fancyRpartPlot(decisionTree)
+```
+
+The decision tree model is validated using the test data to find out how well it performs by determining the accuracy.
+
+```{r}
+predictionTree <- predict(decisionTree, test, type = "class")
+CM_decisionTree <- confusionMatrix(predictionTree, test$classe)
+CM_decisionTree 
+
+#plot confusion matrix results
+plot(CM_decisionTree$table, col = CM_decisionTree$byClass, 
+     main = paste("Decision Tree - Accuracy =", round(CM_decisionTree$overall['Accuracy'], 4)))
+```
+
+The accuracy is 0.6879.  The RandomForest model is built next.
+
+#RandomForest
+
+```{r}
+
+set.seed(12345)
+train1=train
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+randomForest <- train(classe ~ ., data=train, method="rf", trControl=controlRF)
+randomForest$finalModel
+#plot the model
+plot(randomForest)
+```
+Again validation is done using the test dataset
+
+
+```{r}
+predictRandomForest <- predict(randomForest, newdata=test)
+CM_RandomForest <- confusionMatrix(predictRandomForest, test$classe)
+CM_RandomForest
+
+# plot matrix results
+plot(CM_RandomForest$table, col = CM_RandomForest$byClass, 
+     main = paste("Random Forest - Accuracy =",
+     round(CM_RandomForest$overall['Accuracy'], 4)))
+
+```
+
+The accuracy is 0.9941.  The generalized boost model is built next.
+
+#Generalized Boosted Model
+
+
+```{r}
+# model fit
+set.seed(12345)
+GBM_control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+GBM  <- train(classe ~ ., data=train, method = "gbm",
+        trControl = GBM_control, verbose = FALSE)
+GBM$finalModel
+
+
+# prediction on Test dataset
+GBM_pred <- predict(GBM, newdata=test)
+CM_GBM <- confusionMatrix(GBM_pred, test$classe)
+CM_GBM
+
+# plot matrix results
+plot(CM_GBM$table, col = CM_GBM$byClass, 
+     main = paste("GBM - Accuracy =", round(CM_GBM$overall['Accuracy'], 4)))
+```
+
+##Conclusion
+
+There were three algorithms used for predictive modelling.  These were Decision Trees, Random Forests, and global boosting method.  Since the Random Forest Algorithm had the best accuracy, it will be used for validation using the test data set.
+
+```{r}
+testPrediction <- predict(randomForest, newdata=ClnTestData1)
+testPrediction
+```
+
+
+
+
